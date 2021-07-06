@@ -10,7 +10,7 @@ import tensorflow as tf
 import tensorflow.compat.v1 as tfv1
 
 from tensorflow.keras.backend import ctc_label_dense_to_sparse
-from tensorflow.compat.v1.nn import ctc_beam_search_decoder
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tf_logits import get_logits
 
 # These are the tokens that we're allowed to use.
@@ -30,52 +30,51 @@ class Attack:
         self.max_audio_length = max_audio_length
 
         # Trainable variables
-        self.delta = tf.Variable(
-            tf.zeros(max_audio_length, dtype=tf.float32), name='qq_delta')
+        self.delta = tf.Variable(tf.zeros(max_audio_length, dtype=tf.float32),
+                                 name='qq_delta')
 
         # Placeholder
-        self.mask = tf.Variable(
-            tf.zeros((batch_size, max_audio_length), dtype=tf.float32), name='qq_mask')
-        self.audios = tf.Variable(
-            tf.zeros((batch_size, max_audio_length), dtype=tf.float32), name='qq_original')
-        self.lengths = tf.Variable(
-            tf.zeros(batch_size, dtype=tf.int32), name='qq_lengths')
-        self.importance = tf.Variable(tf.zeros(
-            (batch_size, max_target_phrase_length), dtype=tf.float32), name='qq_importance')
-        self.target_phrase = tf.Variable(tf.zeros(
-            (batch_size, max_target_phrase_length), dtype=tf.int32), name='qq_phrase')
-        self.target_phrase_lengths = tf.Variable(
-            tf.zeros((batch_size), dtype=tf.int32), name='qq_phrase_lengths')
-        self.rescale = tf.Variable(
-            tf.zeros((1,), dtype=tf.float32), name='qq_phrase_lengths')
+        self.mask = tfv1.placeholder(shape=(batch_size, max_audio_length),
+                                   dtype=tf.bool)
+        self.audio = tfv1.placeholder(shape=(batch_size, max_audio_length),
+                                    dtype=tf.float32)
+        self.length = tfv1.placeholder(shape=(batch_size,),
+                                     dtype=tf.int32)
+        self.target_phrase = tfv1.placeholder(shape=(batch_size, max_target_phrase_length),
+                                            dtype=tf.int32)
+        self.target_phrase_length = tfv1.placeholder(shape=(batch_size,),
+                                                   dtype=tf.int32)
+        self.rescale = tf.Variable(tf.ones((1,), dtype=tf.float32),
+                                   name='qq_delta')
 
         # Prepare input audios
-        apply_delta = tf.clip_by_value(
-            self.delta, -2000, 2000)*self.rescale*self.mask
+        apply_delta = tf.clip_by_value(self.delta, -2000, 2000)
+        apply_delta = apply_delta * self.rescale * \
+            tf.cast(self.mask, tf.float32)
         noise = tf.random.normal((batch_size, max_audio_length), stddev=2)
-        self.noised_audios = tf.clip_by_value(
-            self.audios + apply_delta + noise, -2**15, 2**15-1)
+        self.noised_audio = tf.clip_by_value(
+            self.audio + apply_delta + noise, -2**15, 2**15-1)
 
         # Get inference result of DeepSpeech
-        self.logits = get_logits(self.noised_audios, self.lengths)
-        self.decoded, _ = tf.nn.ctc_beam_search_decoder(
-            self.logits, self.lengths, merge_repeated=False, beam_width=100)
+        self.logits = get_logits(self.noised_audio, self.length)
+        self.decoded, _ = tfv1.nn.ctc_beam_search_decoder(
+            self.logits, self.length, merge_repeated=False, beam_width=100)
 
         # Calculate loss
         target = ctc_label_dense_to_sparse(
-            self.target_phrase, self.target_phrase_lengths)
-        self.ctc_loss = tf.nn.ctc_loss(labels=tf.cast(target, tf.int32),
-                                       inputs=self.logits, sequence_length=self.lengths)
+            self.target_phrase, self.target_phrase_length)
+        self.ctc_loss = tfv1.nn.ctc_loss(labels=tf.cast(target, tf.int32),
+                                      inputs=self.logits, sequence_length=self.length)
         if not np.isinf(l2penalty):
             l2diff = tf.reduce_mean(
-                (self.noised_audios-self.audios)**2, axis=1)
+                (self.noised_audio-self.audio)**2, axis=1)
             loss = l2diff + l2penalty*self.ctc_loss
         else:
             loss = self.ctc_loss
         self.loss = loss
 
         # Optimize step
-        self.optimizer = tf.train.AdamOptimizer(learning_rate)
+        self.optimizer = tfv1.train.AdamOptimizer(learning_rate)
         grad, var = self.optimizer.compute_gradients(
             self.loss, [self.delta])[0]
         self.train_op = self.optimizer.apply_gradients([(tf.sign(grad), var)])
@@ -88,64 +87,64 @@ class Attack:
         saver.restore(sess, restore_path)
 
         sess.run(tf.variables_initializer(
-            self.optimizer.variables()+[self.delta]))
+            self.optimizer.variables() + [self.delta, self.rescale]))
 
-    def inference(self, sess, audios, lengths):
-        sess.run(self.audios.assign(audios))
-        sess.run(self.lengths.assign((lengths-1)//320))
-        sess.run(self.mask.assign(
-            [[1 if i < l else 0 for i in range(self.max_audio_length)] for l in lengths]))
-        out, logits = sess.run((self.decoded, self.logits))
+    def build_feed_dict(self, audios, lengths, target=None):
+        assert audios.shape[0] == self.batch_size
+        assert audios.shape[1] == self.max_audio_length
+        assert lengths.shape[0] == self.batch_size
+
+        masks = np.zeros(
+            (lengths.shape[0], self.max_audio_length), dtype=np.bool)
+        for i, l in enumerate(lengths):
+            masks[i, :l] = True
+
+        feed_dict = {
+            self.audio: audios,
+            self.length: (lengths-1)//320,
+            self.mask: masks,
+        }
+
+        if target is not None:
+            feed_dict = {
+                **feed_dict,
+                self.target_phrase: pad_sequences(target,
+                                                  maxlen=self.max_target_phrase_length),
+                self.target_phrase_length: [len(x) for x in target],
+            }
+
+        return feed_dict
+
+    def inference(self, sess, feed_dict):
+        out, logits = sess.run((self.decoded, self.logits),
+                               feed_dict=feed_dict)
 
         res = np.zeros(out[0].dense_shape) + len(toks) - 1
         for ii in range(len(out[0].values)):
             x, y = out[0].indices[ii]
             res[x, y] = out[0].values[ii]
 
-        # Here we print the strings that are recognized.
+        # the strings that are recognized.
         res = ["".join(toks[int(x)]
                        for x in y).replace("-", "") for y in res]
-        print("\n".join(res))
 
-        # And here we print the argmax of the alignment.
-        res2 = np.argmax(logits, axis=2).T
-        res2 = ["".join(toks[int(x)] for x in y[:(l-1)//320])
-                for y, l in zip(res2, lengths)]
-        print("\n".join(res2))
+        # the argmax of the alignment.
+        res2 = ["".join(toks[int(x)] for x in y[:l])
+                for y, l in zip(np.argmax(logits, axis=2).T, feed_dict[self.length])]
+        return res, res2
 
-    def train(self, sess, audios, lengths, targets, iterations=100):
-        sess.run(self.audios.assign(audios))
-        sess.run(self.lengths.assign((lengths-1)//320))
-        sess.run(self.mask.assign(
-            [[1 if i < l else 0 for i in range(self.max_audio_length)] for l in lengths]))
-        sess.run(self.target_phrase_lengths.assign([len(x) for x in targets]))
-        sess.run(self.target_phrase.assign(
-            [list(t)+[0]*(self.max_target_phrase_length-len(t)) for t in targets]))
-        sess.run(self.rescale.assign(tf.ones((1,))))
+    def train_step(self, sess, feed_dict):
+        loss, _ = sess.run((self.loss, self.train_op),
+                            feed_dict=feed_dict)
+        return loss
 
-        target_tokens = ["".join([toks[x] for x in target])
-                         for target in targets]
-
+    def train(self, sess, target, feed_dict, iterations=100):
+        target_tokens = ["".join([toks[x] for x in t]) for t in target]
+        
         for i in range(iterations):
-            # Print out some debug information every 10 iterations.
+            # Print debug informations
             if i % 10 == 0:
-                out, logits = sess.run((self.decoded, self.logits))
-                res = np.zeros(out[0].dense_shape)+len(toks)-1
-
-                for ii in range(len(out[0].values)):
-                    x, y = out[0].indices[ii]
-                    res[x, y] = out[0].values[ii]
-
-                # Here we print the strings that are recognized.
-                res = ["".join(toks[int(x)]
-                               for x in y).replace("-", "") for y in res]
-                print("\n".join(res))
-
-                # And here we print the argmax of the alignment.
-                res2 = np.argmax(logits, axis=2).T
-                res2 = ["".join(toks[int(x)] for x in y[:(l-1)//320])
-                        for y, l in zip(res2, lengths)]
-                print("\n".join(res2))
+                res, _ = self.inference(sess, feed_dict=feed_dict)
 
                 worked = [ii for ii in range(
                     self.batch_size) if res[ii] == target_tokens[ii]]
@@ -156,11 +155,11 @@ class Attack:
                     delta.numpy().save('delta.npy')
                     rescale.numpy().save('rescale.npy')
                     sess.run(self.rescale.assign(self.rescale * 0.8))
-                    print('Work to all audios, threshold changed to {}'.format(rescale * 0.8))
+                    print('Work to all audios, threshold changed to {}'.format(
+                        rescale * 0.8))
 
-            # Actually do the optimization step
-            ctc_loss, _ = sess.run((self.ctc_loss, self.train_op))
+            loss = self.train_step(sess, feed_dict)
 
             # Report progress
-            print("step {}: {:.3f}{}".format(i, np.mean(ctc_loss),
-                  "\t".join("{:8.3f}".format(x) for x in ctc_loss)))
+            print("step {}: loss=({:.3f} {:.3f} {:.3f})".format(
+                i, loss.mean(), loss.min(), loss.max()))

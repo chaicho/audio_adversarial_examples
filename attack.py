@@ -74,10 +74,20 @@ class Attack:
         self.loss = loss
 
         # Optimize step
-        self.optimizer = tfv1.train.AdamOptimizer(learning_rate)
-        grad, var = self.optimizer.compute_gradients(
-            self.loss, [self.delta])[0]
-        self.train_op = self.optimizer.apply_gradients([(tf.sign(grad), var)])
+        self.lr = tf.Variable(0.0, shape=(), name='qq_lr')
+        global_step = tfv1.train.get_global_step()
+        # self.lr = tfv1.train.exponential_decay(
+        #     1e-6, global_step=global_step,
+        #     decay_steps=10, decay_rate=2)
+        self.optimizer = tfv1.train.AdamOptimizer(self.lr)
+        self.train_op = self.optimizer.minimize(-self.loss, global_step=global_step)
+        tf.summary.scalar("learning_rate", self.lr)
+        tf.summary.scalar("current_step", global_step)
+        tf.summary.scalar("loss", self.loss)
+        # self.optimizer = tfv1.train.AdamOptimizer(learning_rate)
+        # grad, var = self.optimizer.compute_gradients(
+        #     self.loss, [self.delta])[0]
+        # self.train_op = self.optimizer.apply_gradients([(-grad, var)])
 
     def init_sess(self, sess, restore_path=None):
         # And finally restore the graph to make the classifier
@@ -106,6 +116,7 @@ class Attack:
         }
 
         if target is not None:
+            target = [[toks.index(x) for x in phrase.lower()] for phrase in target]
             feed_dict = {
                 **feed_dict,
                 self.target_phrase: pad_sequences(target,
@@ -137,6 +148,9 @@ class Attack:
         loss, _ = sess.run((self.loss, self.train_op),
                             feed_dict=feed_dict)
         return loss
+
+    def get_delta(self, sess):
+        delta = sess.run(tf.clip_by_value(model.delta, -2000, 2000) * self.rescale)
 
     def train(self, sess, target, feed_dict, iterations=100):
         target_tokens = ["".join([toks[x] for x in t]) for t in target]

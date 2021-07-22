@@ -80,7 +80,7 @@ class Attack:
         #     1e-6, global_step=global_step,
         #     decay_steps=10, decay_rate=2)
         self.optimizer = tfv1.train.AdamOptimizer(self.lr)
-        self.train_op = self.optimizer.minimize(-self.loss, global_step=global_step)
+        self.train_op = self.optimizer.minimize(-self.loss, global_step=global_step, var_list=[self.delta])
         tf.summary.scalar("learning_rate", self.lr)
         tf.summary.scalar("current_step", global_step)
         tf.summary.scalar("loss", self.loss)

@@ -6,6 +6,7 @@
 # contained in the LICENCE file in this directory.
 
 import numpy as np
+from numpy.core.fromnumeric import shape
 import tensorflow as tf
 import tensorflow.compat.v1 as tfv1
 
@@ -30,9 +31,8 @@ class Attack:
         self.max_audio_length = max_audio_length
 
         # Trainable variables
-        self.delta = tf.Variable(tf.zeros(max_audio_length, dtype=tf.float32),
+        self.delta = tf.Variable(tf.zeros(2 * max_audio_length, dtype=tf.float32),
                                  name='qq_delta')
-
         # Placeholder
         self.mask = tfv1.placeholder(shape=(batch_size, max_audio_length),
                                    dtype=tf.bool)
@@ -44,11 +44,12 @@ class Attack:
                                             dtype=tf.int32)
         self.target_phrase_length = tfv1.placeholder(shape=(batch_size,),
                                                    dtype=tf.int32)
+        self.interval_start = tf.placeholder(tf.ones((1,), dtype =tf.int32) ,)
         self.rescale = tf.Variable(tf.ones((1,), dtype=tf.float32),
                                    name='qq_delta')
 
         # Prepare input audios
-        apply_delta = tf.clip_by_value(self.delta, -2000, 2000)
+        apply_delta = tf.clip_by_value(self.delta[self.interval_start: self.interval_start + max_audio_length], -2000, 2000)
         apply_delta = apply_delta * self.rescale * \
             tf.cast(self.mask, tf.float32)
         noise = tf.random.normal((batch_size, max_audio_length), stddev=2)
@@ -71,7 +72,7 @@ class Attack:
             loss = l2diff + l2penalty*self.ctc_loss
         else:
             loss = self.ctc_loss
-        self.loss = loss
+        self.loss = loss 
 
         # Optimize step
         self.lr = tf.Variable(0.0, shape=(), name='qq_lr')
@@ -113,6 +114,7 @@ class Attack:
             self.audio: audios,
             self.length: (lengths-1)//320,
             self.mask: masks,
+            self.interval_start : tf.randint(0,self.max_audio_length)
         }
 
         if target is not None:

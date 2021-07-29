@@ -6,6 +6,7 @@
 # contained in the LICENCE file in this directory.
 
 import numpy as np
+from random import randint
 from numpy.core.fromnumeric import shape
 import tensorflow as tf
 import tensorflow.compat.v1 as tfv1
@@ -44,12 +45,13 @@ class Attack:
                                             dtype=tf.int32)
         self.target_phrase_length = tfv1.placeholder(shape=(batch_size,),
                                                    dtype=tf.int32)
-        self.interval_start = tf.placeholder(tf.ones((1,), dtype =tf.int32) ,)
+        self.interval_start = tf.placeholder( 
+                                        dtype =tf.int32)
         self.rescale = tf.Variable(tf.ones((1,), dtype=tf.float32),
                                    name='qq_delta')
 
         # Prepare input audios
-        apply_delta = tf.clip_by_value(self.delta[self.interval_start: self.interval_start + max_audio_length], -2000, 2000)
+        apply_delta = tf.clip_by_value((self.delta)[self.interval_start: self.interval_start + max_audio_length], -2000, 2000)
         apply_delta = apply_delta * self.rescale * \
             tf.cast(self.mask, tf.float32)
         noise = tf.random.normal((batch_size, max_audio_length), stddev=2)
@@ -114,7 +116,7 @@ class Attack:
             self.audio: audios,
             self.length: (lengths-1)//320,
             self.mask: masks,
-            self.interval_start : tf.randint(0,self.max_audio_length)
+            self.interval_start : randint(0,self.max_audio_length)
         }
 
         if target is not None:

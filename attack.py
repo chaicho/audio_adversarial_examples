@@ -49,9 +49,10 @@ class Attack:
                                         dtype =tf.int32)
         self.rescale = tf.Variable(tf.ones((1,), dtype=tf.float32),
                                    name='qq_delta')
-
+        self.is_command = tf.placeholder( 
+                                        dtype =tf.int32)
         # Prepare input audios
-        apply_delta = tf.clip_by_value((self.delta)[self.interval_start: self.interval_start + self.max_audio_length], -2000, 2000)
+        apply_delta = tf.clip_by_value((self.delta)[self.interval_start: self.interval_start + max_audio_length], -2000, 2000)
         apply_delta = apply_delta * self.rescale * \
             tf.cast(self.mask, tf.float32)
         noise = tf.random.normal((batch_size, max_audio_length), stddev=2)
@@ -83,7 +84,7 @@ class Attack:
         #     1e-6, global_step=global_step,
         #     decay_steps=10, decay_rate=2)
         self.optimizer = tfv1.train.AdamOptimizer(self.lr)
-        self.train_op = self.optimizer.minimize(-self.loss, global_step=global_step, var_list=[self.delta])
+        self.train_op = self.optimizer.minimize(self.loss * self.is_command, global_step=global_step, var_list=[self.delta])
         tf.summary.scalar("learning_rate", self.lr)
         tf.summary.scalar("current_step", global_step)
         tf.summary.scalar("loss", self.loss)
@@ -102,7 +103,7 @@ class Attack:
         sess.run(tf.variables_initializer(
             self.optimizer.variables() + [self.delta, self.rescale]))
 
-    def build_feed_dict(self, audios, lengths, target=None):
+    def build_feed_dict(self, audios, lengths, target=None,is_command = -1):
         assert audios.shape[0] == self.batch_size
         assert audios.shape[1] == self.max_audio_length
         assert lengths.shape[0] == self.batch_size
@@ -116,9 +117,10 @@ class Attack:
             self.audio: audios,
             self.length: (lengths-1)//320,
             self.mask: masks,
-            self.interval_start : randint(0,self.max_audio_length)
+            self.interval_start : randint(0,self.max_audio_length),
+            self.is_command :  is_command
         }
-        print(self.interval_start)
+        # print(self.interval_start)
         if target is not None:
             target = [[toks.index(x) for x in phrase.lower()] for phrase in target]
             feed_dict = {
@@ -126,6 +128,7 @@ class Attack:
                 self.target_phrase: pad_sequences(target,
                                                   maxlen=self.max_target_phrase_length),
                 self.target_phrase_length: [len(x) for x in target],
+
             }
 
         return feed_dict

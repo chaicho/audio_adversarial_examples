@@ -15,12 +15,12 @@ class Audio_dataset:
         self.max_audio_length = max_audio_length
         self.max_target_length =  max_target_length
         self.batch_size = batch_size
-        self.batches = self.len(audio_names)//self.batch_size
+        self.batches = len(self.audio_names)//self.batch_size
     def __iter__(self):
         audios = np.empty((self.batch_size, self.max_audio_length), dtype=np.int16)
         lengths = np.empty((self.batch_size,), dtype=np.int32)
         targets = [None] * self.batch_size
-        i,cur_size = 0
+        i,cur_size = 0,0 
         for filename in self.audios:
             sample_rate, audio = wav.read(filename)
             assert sample_rate == 16000

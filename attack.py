@@ -50,14 +50,14 @@ class Attack:
         self.rescale = tf.Variable(tf.ones((1,), dtype=tf.float32),
                                    name='qq_delta')
         self.is_command = tf.placeholder( 
-                                        dtype =tf.int32)
+                                        dtype =tf.float32)
         # Prepare input audios
         apply_delta = tf.clip_by_value((self.delta)[self.interval_start: self.interval_start + max_audio_length], -2000, 2000)
         apply_delta = apply_delta * self.rescale * \
             tf.cast(self.mask, tf.float32)
         noise = tf.random.normal((batch_size, max_audio_length), stddev=2)
         self.noised_audio = tf.clip_by_value(
-            self.audio + apply_delta + noise, -2**15, 2**15-1)
+            self.audio *  tf.cast(self.mask, tf.float32) + apply_delta + noise, -2**15, 2**15-1)
 
         # Get inference result of DeepSpeech
         self.logits = get_logits(self.noised_audio, self.length)

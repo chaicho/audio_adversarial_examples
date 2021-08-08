@@ -6,7 +6,7 @@
 # contained in the LICENCE file in this directory.
 
 import numpy as np
-from random import randint
+from random import randint, seed
 from numpy.core.fromnumeric import shape
 import tensorflow as tf
 import tensorflow.compat.v1 as tfv1
@@ -34,6 +34,10 @@ class Attack:
         # Trainable variables
         self.delta = tf.Variable(tf.zeros(2 * max_audio_length, dtype=tf.float32),
                                  name='qq_delta')
+        self.rescale = tf.Variable(tf.ones((1,), dtype=tf.float32),
+                                   name='qq_rescale')
+        self.lr = tf.Variable(0.0, shape=(), name='qq_lr')
+                           
         # Placeholder
         self.mask = tfv1.placeholder(shape=(batch_size, max_audio_length),
                                    dtype=tf.bool)
@@ -47,8 +51,7 @@ class Attack:
                                                    dtype=tf.int32)
         self.interval_start = tf.placeholder( 
                                         dtype =tf.int32)
-        self.rescale = tf.Variable(tf.ones((1,), dtype=tf.float32),
-                                   name='qq_delta')
+
         self.is_command = tf.placeholder( 
                                         dtype =tf.float32)
         # Prepare input audios
@@ -57,7 +60,7 @@ class Attack:
             tf.cast(self.mask, tf.float32)
         noise = tf.random.normal((batch_size, max_audio_length), stddev=2)
         self.noised_audio = tf.clip_by_value(
-            self.audio *  tf.cast(self.mask, tf.float32) + apply_delta + noise, -2**15, 2**15-1)
+            self.audio  + apply_delta + noise, -2**15, 2**15-1)
 
         # Get inference result of DeepSpeech
         self.logits = get_logits(self.noised_audio, self.length)
@@ -78,13 +81,13 @@ class Attack:
         self.loss = loss 
 
         # Optimize step
-        self.lr = tf.Variable(0.0, shape=(), name='qq_lr')
         global_step = tfv1.train.get_global_step()
         # self.lr = tfv1.train.exponential_decay(
         #     1e-6, global_step=global_step,
         #     decay_steps=10, decay_rate=2)
         self.optimizer = tfv1.train.AdamOptimizer(self.lr)
-        self.train_op = self.optimizer.minimize(self.loss * self.is_command, global_step=global_step, var_list=[self.delta])
+        self.pos_train_op = self.optimizer.minimize(self.loss, global_step=global_step, var_list=[self.delta])
+        self.neg_train_op = self.optimizer.minimize(-self.loss, global_step=global_step, var_list=[self.delta])
         tf.summary.scalar("learning_rate", self.lr)
         tf.summary.scalar("current_step", global_step)
         tf.summary.scalar("loss", self.loss)
@@ -101,13 +104,12 @@ class Attack:
         saver.restore(sess, restore_path)
 
         sess.run(tf.variables_initializer(
-            self.optimizer.variables() + [self.delta, self.rescale]))
+            self.optimizer.variables() +  [x for x in tf.global_variables() if 'qq'  in x.name]))
 
-    def build_feed_dict(self, audios, lengths, target=None,is_command = -1):
+    def build_feed_dict(self, audios, lengths, target=None,is_command = 1):
         assert audios.shape[0] == self.batch_size
         assert audios.shape[1] == self.max_audio_length
         assert lengths.shape[0] == self.batch_size
-
         masks = np.zeros(
             (lengths.shape[0], self.max_audio_length), dtype=np.bool)
         for i, l in enumerate(lengths):
@@ -117,12 +119,11 @@ class Attack:
             self.audio: audios,
             self.length: (lengths-1)//320,
             self.mask: masks,
-            self.interval_start : randint(0,self.max_audio_length),
+            self.interval_start : 0,
             self.is_command :  is_command
         }
-        # print(self.interval_start)
         if target is not None:
-            target = [[toks.index(x) for x in phrase.lower()] for phrase in target]
+            target = [[toks.index(x) for x in phrase.lower()] + [toks.index('-')] * (self.max_target_phrase_length - len(phrase)) for phrase in target]
             feed_dict = {
                 **feed_dict,
                 self.target_phrase: pad_sequences(target,
@@ -151,8 +152,9 @@ class Attack:
                 for y, l in zip(np.argmax(logits, axis=2).T, feed_dict[self.length])]
         return res, res2
 
-    def train_step(self, sess, feed_dict):
-        loss, _ = sess.run((self.loss, self.train_op),
+    def train_step(self, sess, feed_dict,is_command):
+        train_op = self.pos_train_op if is_command == 1 else  self.neg_train_op 
+        loss, _ = sess.run((self.loss, train_op),
                             feed_dict=feed_dict)
         return loss
 

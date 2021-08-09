@@ -22,22 +22,22 @@ class Audio_dataset:
         lengths = np.empty((self.batch_size,), dtype=np.int32)
         targets = [None] * self.batch_size
         i,cur_size,cur_batch = self.cur_loc,0,0 
-        for filename in self.audios:
-                sample_rate, audio = wav.read(filename)
-                assert sample_rate == 16000
-                assert audio.dtype == np.int16
-                target_phrase = self.targets[i]
-                i += 1
-                if len(audio) > self.max_audio_length or len(target_phrase) > self.max_target_length:
-                    continue
-                audios[cur_size, :len(audio)] = audio
-                lengths[cur_size] = len(audio)
-                targets[cur_size] = target_phrase
-                cur_size += 1
-                if cur_size == self.batch_size:
-                    cur_size = 0
-                    cur_batch += 1
-                    yield cur_batch, audios, lengths, targets
-                    if(cur_batch==self.batches):
-                        yield break
+        while True:
+            for filename in self.audios:
+                    sample_rate, audio = wav.read(filename)
+                    assert sample_rate == 16000
+                    assert audio.dtype == np.int16
+                    target_phrase = self.targets[i]
+                    i += 1
+                    if len(audio) > self.max_audio_length or len(target_phrase) > self.max_target_length:
+                        continue
+                    audios[cur_size, :len(audio)] = audio
+                    lengths[cur_size] = len(audio)
+                    targets[cur_size] = target_phrase
+                    cur_size += 1
+                    if cur_size == self.batch_size:
+                        cur_size = 0
+                        cur_batch += 1
+                        yield cur_batch, audios, lengths, targets
+    
     

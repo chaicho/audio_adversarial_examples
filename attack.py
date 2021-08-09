@@ -119,7 +119,8 @@ class Attack:
             self.audio: audios,
             self.length: (lengths-1)//320,
             self.mask: masks,
-            self.interval_start : 0,
+            self.interval_start : randint(0,self.max_audio_length-1),
+            # self.interval_start : 0,   
             self.is_command :  is_command
         }
         if target is not None:

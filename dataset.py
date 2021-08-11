@@ -23,6 +23,7 @@ class Audio_dataset:
         targets = [None] * self.batch_size
         i,cur_size,cur_batch = self.cur_loc,0,0 
         while True:
+            i = 0
             for filename in self.audios:
                     sample_rate, audio = wav.read(filename)
                     assert sample_rate == 16000
@@ -39,5 +40,5 @@ class Audio_dataset:
                         cur_size = 0
                         cur_batch += 1
                         yield cur_batch, audios, lengths, targets
-    
+
     

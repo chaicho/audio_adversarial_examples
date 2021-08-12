@@ -32,7 +32,7 @@ class Attack:
         self.max_audio_length = max_audio_length
 
         # Trainable variables
-        self.delta = tf.Variable(tf.zeros(2 * max_audio_length, dtype=tf.float32),
+        self.delta = tf.Variable(tf.zeros(max_audio_length, dtype=tf.float32),
                                  name='qq_delta')
         self.rescale = tf.Variable(tf.ones((1,), dtype=tf.float32),
                                    name='qq_rescale')
@@ -55,7 +55,8 @@ class Attack:
         self.is_command = tf.placeholder( 
                                         dtype =tf.float32)
         # Prepare input audios
-        apply_delta = tf.clip_by_value((self.delta)[self.interval_start: self.interval_start + max_audio_length], -2000, 2000)
+        actual_delta = tf.concat(self.delta[self.interval_start: ] , self.delta[:self.interval_start],axis=0)
+        apply_delta = tf.clip_by_value(actual_delta, -2000, 2000)
         apply_delta = apply_delta * self.rescale * \
             tf.cast(self.mask, tf.float32)
         noise = tf.random.normal((batch_size, max_audio_length), stddev=2)

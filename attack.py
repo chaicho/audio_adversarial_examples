@@ -55,7 +55,7 @@ class Attack:
         self.is_command = tf.placeholder( 
                                         dtype =tf.float32)
         # Prepare input audios
-        actual_delta = tf.concat(self.delta[self.interval_start: ] , self.delta[:self.interval_start],axis=0)
+        actual_delta = tf.concat((self.delta[self.interval_start: ] , self.delta[:self.interval_start]),axis=0)
         apply_delta = tf.clip_by_value(actual_delta, -2000, 2000)
         apply_delta = apply_delta * self.rescale * \
             tf.cast(self.mask, tf.float32)
